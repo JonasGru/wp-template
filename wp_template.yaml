@@ -1,0 +1,370 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: wordpress-mysql-ktu
+  annotations:
+    description: This template defines and creates resources for Wordpress installation which is running on Apache and using MySQL database.
+    iconClass: icon-wordpress
+    openshift.io/display-name: Wordpress + MySQL. KTU
+    openshift.io/documentation-url: https://github.com/JonasGru/wp-template
+    openshift.io/provider-display-name: Jonas Gruzdys
+    tags: quickstart,wordpress,mysql
+    template.openshift.io/bindable: "false"
+labels:
+  template: wordpress-nginx
+  app: ${NAME}
+objects:
+# WP Service
+- kind: Service
+  apiVersion: v1
+  metadata:
+    labels:
+      app: ${NAME}
+    name: ${NAME}
+  spec:
+    ports:
+    - name: http
+      port: 8080
+      protocol: TCP
+      targetPort: 80
+    selector:
+      app: ${NAME}
+      name: wordpress
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+# DB Service
+- kind: Service
+  apiVersion: v1
+  metadata:
+    labels:
+      app: ${NAME}
+    name: mysql-database
+  spec:
+    ports:
+    - name: mariadb
+      port: 3306
+      protocol: TCP
+      targetPort: 3306
+    selector:
+      app: ${NAME}
+      name: mysql-database
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- kind: DeploymentConfig # Wordpress DeploymentConfig
+  apiVersion: apps.openshift.io/v1
+  metadata:
+    labels:
+      app: ${NAME}
+      name: wordpress
+    name: ${NAME}
+  spec:
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      app: ${NAME}
+      name: wordpress
+    strategy:
+      resources:
+        limits:
+          cpu: ${APP_CPU_LIMIT}
+          memory: ${APP_MEMORY_LIMIT}
+        requests:
+          cpu: ${APP_CPU_REQUEST}
+          memory: ${APP_MEMORY_REQUEST}
+      activeDeadlineSeconds: 21600
+      type: Recreate
+    template:
+      metadata:
+        creationTimestamp: null
+        labels:
+          app: ${NAME}
+          name: wordpress
+      spec:
+        containers:
+        - env:
+          - name: WORDPRESS_DB_USER
+            valueFrom:
+              secretKeyRef:
+                key: database-user
+                name: mysql-database-secret
+          - name: WORDPRESS_DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: database-password
+                name: mysql-database-secret
+          - name: WORDPRESS_DB_HOST
+            value: mysql-database
+          - name: MYSQL_PORT
+            value: "3306"
+          - name: WORDPRESS_DB_NAME
+            value: ${NAME}
+          image: wordpress:6.2.1-apache
+          resources:
+            limits:
+              cpu: ${APP_CPU_LIMIT}
+              memory: ${APP_MEMORY_LIMIT}
+            requests:
+              cpu: ${APP_CPU_REQUEST}
+              memory: ${APP_MEMORY_REQUEST}
+          imagePullPolicy: IfNotPresent
+          ports:
+          - containerPort: 8080
+            name: wordpress
+          name: wordpress
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+          - mountPath: /var/www/html
+            name: ${NAME}-files
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: 
+          sysctls:               # for port 80
+          - name: net.ipv4.ip_unprivileged_port_start
+            value: "0"
+        terminationGracePeriodSeconds: 30
+        volumes:
+        - name: ${NAME}-files
+          persistentVolumeClaim:
+            claimName: wordpress-files
+    test: false
+- kind: DeploymentConfig #Database DeploymentConfig
+  apiVersion: apps.openshift.io/v1
+  metadata:
+    labels:
+      app: ${NAME}
+    name: mysql-database
+  spec:
+    replicas: 1
+    revisionHistoryLimit: 5
+    selector:
+      app: ${NAME}
+      name: mysql-database
+    strategy:
+      resources:
+        limits:
+          cpu: ${DB_CPU_LIMIT}
+          memory: ${DB_MEMORY_LIMIT}
+        requests:
+          cpu: ${DB_CPU_REQUEST}
+          memory: ${DB_MEMORY_REQUEST}
+      activeDeadlineSeconds: 21600
+      recreateParams:
+        timeoutSeconds: 600
+      type: Recreate
+    template:
+      metadata:
+        creationTimestamp: null
+        labels:
+          app: ${NAME}
+          name: mysql-database
+      spec:
+        containers:
+        - env:
+          - name: MYSQL_USER
+            valueFrom:
+              secretKeyRef:
+                key: database-user
+                name: mysql-database-secret
+          - name: MYSQL_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: database-password
+                name: mysql-database-secret
+          - name: MYSQL_ROOT_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: database-root-password
+                name: mysql-database-secret
+          - name: MYSQL_DATABASE
+            value: ${NAME}
+          image: mysql:8.0
+          imagePullPolicy: IfNotPresent
+          resources:
+            limits:
+              cpu: ${DB_CPU_LIMIT}
+              memory: ${DB_MEMORY_LIMIT}
+            requests:
+              cpu: ${DB_CPU_REQUEST}
+              memory: ${DB_MEMORY_REQUEST}
+          livenessProbe:
+            failureThreshold: 3
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            successThreshold: 1
+            tcpSocket:
+              port: 3306
+            timeoutSeconds: 1
+          name: mysql
+          ports:
+          - containerPort: 3306
+            protocol: TCP
+          readinessProbe:
+            exec:
+              command:
+              - /bin/sh
+              - -i
+              - -c
+              - MYSQL_PWD="$MYSQL_PASSWORD" mysql -h 127.0.0.1 -u $MYSQL_USER -D $MYSQL_DATABASE
+                -e 'SELECT 1'
+            failureThreshold: 3
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+          - mountPath: /var/lib/mysql
+            name: wordpress-db-data
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 30
+        volumes:
+        - name: wordpress-db-data
+          persistentVolumeClaim:
+            claimName: wordpress-db
+- kind: Route
+  apiVersion: route.openshift.io/v1
+  metadata:
+    labels:
+      app: wordpress
+    name: wordpress
+  spec:
+    host: '${APPLICATION_DOMAIN}'
+    port:
+      targetPort: http
+    to:
+      kind: Service
+      name: ${NAME}
+      weight: 100
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+    wildcardPolicy: None
+- kind: PersistentVolumeClaim
+  apiVersion: v1
+  metadata:
+    name: wordpress-files
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: ${FILES_VOLUME_CAPACITY}
+- kind: PersistentVolumeClaim
+  apiVersion: v1
+  metadata:
+    name: wordpress-db
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: ${DB_VOLUME_CAPACITY}
+- kind: Secret
+  apiVersion: v1
+  metadata:
+    name: mysql-database-secret
+  stringData:
+    database-user: wordpress
+    database-password: ${MYSQL_PASSWORD}
+    database-root-password: ${MYSQL_ROOT_PASSWORD}
+- kind: Secret
+  apiVersion: v1
+  metadata:
+    name: wordpress
+  stringData:
+    database-user: wordpress
+    database-password: ${MYSQL_PASSWORD}
+    database-root-password: ${MYSQL_ROOT_PASSWORD}
+parameters:
+- description: The name assigned to all of the frontend objects defined in this template.
+  displayName: Name
+  name: NAME
+  required: true
+  from: 'wordpress-[a-f0-9]{6}'
+  generate: expression
+- name: APPLICATION_DOMAIN
+  displayName: Application Hostname
+  description: >-
+    The exposed hostname that will route to the wordpress service, if left blank
+    a value will be defaulted.
+- description: Maximum amount of memory limits the App container can use.
+  displayName: Memory Limit
+  name: APP_MEMORY_LIMIT
+  required: true
+  value: 512Mi
+- description: Maximum amount of cpu limits the App container can use.
+  displayName: CPU Limit
+  name: APP_CPU_LIMIT
+  required: true
+  value: 200m
+- description: Maximum amount of memory requests the App container can use.
+  displayName: Memory Request
+  name: APP_MEMORY_REQUEST
+  required: true
+  value: 128Mi
+- description: Maximum amount of cpu requests the App container can use.
+  displayName: CPU Request
+  name: APP_CPU_REQUEST
+  required: true
+  value: 20m
+- description: Maximum amount of memory limits the MariaDB container can use.
+  displayName: Memory Limit (MySQL)
+  name: DB_MEMORY_LIMIT
+  required: true
+  value: 512Mi
+- description: Maximum amount of cpu limits the MariaDB container can use.
+  displayName: CPU Limit (MySQL)
+  name: DB_CPU_LIMIT
+  required: true
+  value: 200m
+- description: Maximum amount of memory requests the MariaDB container can use.
+  displayName: Memory Request (MySQL)
+  name: DB_MEMORY_REQUEST
+  required: true
+  value: 512Mi
+- description: Maximum amount of cpu requests the MariaDB container can use.
+  displayName: CPU Request (MySQL)
+  name: DB_CPU_REQUEST
+  required: true
+  value: 200m  
+- description: Volume space available for DB data, e.g. 512Mi, 2Gi
+  displayName: Volume Capacity
+  name: DB_VOLUME_CAPACITY
+  required: true
+  value: 1Gi
+- description: Volume space available for sites/default/files, e.g. 512Mi, 2Gi
+  displayName: Files Volume Capacity
+  name: FILES_VOLUME_CAPACITY
+  required: true
+  value: 1Gi
+- description: Clusters Router Canonical Hostname is self explanatory.
+  displayName: Router Canonical Hostname 
+  name: ROUTER_CANONICAL_HOSTNAME
+  # value: apps.okd-cluster2.litnet.lt
+- displayName: Database Name
+  name: MYSQL_DATABASE
+  required: true
+  value: wordpress
+- displayName: Database User
+  name: MYSQL_USER
+  required: true
+  value: wordpress
+- name: MYSQL_ROOT_PASSWORD
+  displayName: MySQL root user Password
+  description: Password for the MySQL root user.
+  generate: expression
+  from: "[a-zA-Z0-9]{16}"
+- displayName: Database Password
+  from: '[a-zA-Z0-9]{16}'
+  generate: expression
+  name: MYSQL_PASSWORD
