@@ -1,5 +1,5 @@
 # wp-template
-Template for Wordpress and MySQL deployment on OKD
+Paruoštukas skirtas Wordpress ir MySQL paleidimui ant OKD
 
 # Template paleidimas iš failo per komandinę eilutę
 Reikalinga turėti įsidiegus [oc komandinės eilutės įrankį](https://docs.openshift.com/container-platform/latest/cli_reference/openshift_cli/getting-started-cli.html) ir iš OKD pasiimti savo prisijungimo komandą (Prisijungus prie OKD viršuje dešinėje paspaudus ant savo naudotojo vardo pasirinkti "Copy login command". Ją panaudoti per oc komandinės eilutės įrankį).
